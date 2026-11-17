@@ -1,0 +1,68 @@
+
+name: Africa Store Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Prepare and build APK
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Project ZIP file not found"
+            exit 1
+          fi
+
+          mkdir -p /tmp/africa-source
+          unzip -q "$ZIP_FILE" -d /tmp/africa-source
+
+          PROJECT_DIR=$(find /tmp/africa-source -name pubspec.yaml -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Flutter project not found"
+            exit 1
+          fi
+
+          cd "$PROJECT_DIR"
+
+          flutter create --platforms=android --org com.africastore --project-name manager .
+
+          flutter pub get
+
+          flutter build apk --debug
+
+          echo "APK_PATH=$PROJECT_DIR/build/app/outputs/flutter-apk/app-debug.apk" >> "$GITHUB_ENV"
+
+      - name: Save APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Africa-Store-APK
+          path: ${{ env.APK_PATH }}
+          retention-days: 7
+          
