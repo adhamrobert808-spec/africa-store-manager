@@ -1,4 +1,3 @@
-
 name: Africa Store Android Build
 
 on:
@@ -12,57 +11,94 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Download project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
 
-      - name: Prepare and build APK
+      - name: Extract the intended project
         run: |
           set -euo pipefail
+          ZIP_FILE="africa_store_android_project_updated.zip"
+          test -f "$ZIP_FILE" || { echo "Missing $ZIP_FILE in repository root"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/africa-source"
+          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/africa-source"
+          PROJECT_DIR="$RUNNER_TEMP/africa-source/clothing_manager_android"
+          test -f "$PROJECT_DIR/pubspec.yaml"
+          test -f "$PROJECT_DIR/lib/main.dart"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          ZIP_FILE=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+      - name: Accept the existing Firebase admin role
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['PROJECT_DIR'])
+          p = root / 'lib/main.dart'
+          s = p.read_text()
+          s = s.replace("bool get isManager => role == 'manager';", "bool get isManager => role == 'manager' || role == 'admin';")
+          s = s.replace("!['manager', 'seller'].contains(data?['role'])", "!['manager', 'admin', 'seller'].contains(data?['role'])")
+          p.write_text(s)
+          rules = root / 'firestore.rules'
+          if rules.exists():
+              r = rules.read_text().replace("profile().role == 'manager';", "(profile().role == 'manager' || profile().role == 'admin');")
+              rules.write_text(r)
+          PY
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "Project ZIP file not found"
-            exit 1
+      - name: Generate Android platform files
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android .
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/build.gradle.kts')
+          if p.exists():
+              s = p.read_text()
+              s = s.replace('namespace = "com.example.clothing_manager"', 'namespace = "com.africastore.manager"')
+              s = s.replace('applicationId = "com.example.clothing_manager"', 'applicationId = "com.africastore.manager"')
+              p.write_text(s)
+          else:
+              p = Path('android/app/build.gradle')
+              s = p.read_text()
+              s = s.replace("namespace 'com.example.clothing_manager'", "namespace 'com.africastore.manager'")
+              s = s.replace("applicationId 'com.example.clothing_manager'", "applicationId 'com.africastore.manager'")
+              p.write_text(s)
+          PY
+
+      - name: Configure Google Services plugin
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          if [ -f android/app/build.gradle.kts ]; then
+            grep -q 'com.google.gms.google-services' android/app/build.gradle.kts || sed -i '/plugins {/a\    id("com.google.gms.google-services") version "4.4.2"' android/app/build.gradle.kts
+          else
+            grep -q 'com.google.gms.google-services' android/app/build.gradle || sed -i "/apply plugin: 'com.android.application'/a apply plugin: 'com.google.gms.google-services'" android/app/build.gradle
           fi
+          test -f android/app/google-services.json
 
-          mkdir -p /tmp/africa-source
-          unzip -q "$ZIP_FILE" -d /tmp/africa-source
-
-          PROJECT_DIR=$(find /tmp/africa-source -name pubspec.yaml -printf '%h\n' | head -n 1)
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "Flutter project not found"
-            exit 1
-          fi
-
-          cd "$PROJECT_DIR"
-
-          flutter create --platforms=android --org com.africastore --project-name manager .
-
+      - name: Get dependencies and build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
           flutter pub get
-
           flutter build apk --debug
-
           echo "APK_PATH=$PROJECT_DIR/build/app/outputs/flutter-apk/app-debug.apk" >> "$GITHUB_ENV"
 
-      - name: Save APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Africa-Store-APK
           path: ${{ env.APK_PATH }}
           retention-days: 7
-          
