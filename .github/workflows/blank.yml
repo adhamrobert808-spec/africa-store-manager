@@ -1,3 +1,4 @@
+
 name: Africa Store Android Build
 
 on:
@@ -77,6 +78,20 @@ jobs:
               p.write_text(s)
           PY
 
+      - name: Ensure Android MainActivity exists
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          find android/app/src/main -type f \( -name 'MainActivity.kt' -o -name 'MainActivity.java' \) -delete
+          mkdir -p android/app/src/main/kotlin/com/africastore/manager
+          cat > android/app/src/main/kotlin/com/africastore/manager/MainActivity.kt <<'EOF'
+          package com.africastore.manager
+
+          import io.flutter.embedding.android.FlutterActivity
+
+          class MainActivity : FlutterActivity()
+          EOF
+
       - name: Configure Google Services plugin
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -102,3 +117,4 @@ jobs:
           name: Africa-Store-APK
           path: ${{ env.APK_PATH }}
           retention-days: 7
+          
